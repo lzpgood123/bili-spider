@@ -1,32 +1,49 @@
-# Bilibili 视频关键词筛选爬取工具
+# Bilibili 视频关键词精准筛选爬取工具
 
 功能：
 - ✅ B站关键词搜索视频
 - ✅ 标题关键词精准筛选（支持多个关键词，必须全部匹配）
 - ✅ 简介关键词精准筛选（支持多个关键词，必须全部匹配）
+- ✅ **UP主空间爬取** - 输入UP主ID/链接，获取该UP主全部视频并筛选
 - ✅ 输出匹配视频链接
+- ✅ **Web图形界面** - 浏览器打开即可操作，可视化交互
 - ✅ 批量自动下载视频（支持限制下载数量、选择画质）
+- ✅ 搜索结果自动保存到 `output/` 文件夹（JSON + 文本格式）
 
 ## 安装依赖
 
 ```bash
-pip install requests
-# 如果需要下载功能，还需要安装：
-pip install bilibili-api-python
+pip install -r requirements.txt
 ```
 
-系统需要安装 ffmpeg 用于视频合并：
+系统需要安装 ffmpeg 用于视频合并（下载功能需要）：
 ```bash
 # Ubuntu/Debian
 apt install ffmpeg
 
-# CentOS/RHEL
-yum install ffmpeg
+# Windows
+# 下载ffmpeg后解压，将bin目录加入PATH环境变量
 ```
 
-## 使用方法
+## 快速开始
 
-### 仅搜索筛选（不下载）
+### Web界面版本（推荐）
+
+```bash
+python app.py
+```
+
+然后打开浏览器访问: http://127.0.0.1:5000
+
+界面有三个标签页：
+
+1. **关键词搜索** - 按关键词搜索，筛选标题/简介
+2. **UP主爬取** - 输入UP主ID或空间链接，获取该UP主视频并筛选
+3. **批量下载** - 选择画质和下载数量，开始下载
+
+---
+
+### 命令行版本（原功能不变）
 
 ```bash
 # 基本搜索
@@ -40,22 +57,43 @@ python bili_spider.py -s "python教程" -t 基础 -d 项目实战
 
 # 保存结果到JSON文件
 python bili_spider.py -s "python教程" -t 基础 -o results.json
-```
 
-### 搜索+自动下载
-
-```bash
 # 搜索筛选后下载全部匹配视频
 python bili_spider.py -s "python教程" -t 基础 --download
 
 # 限制最多下载 5 个，画质选择 1080P
 python bili_spider.py -s "python教程" -t 基础 --download --limit 5 --quality 80
-
-# 指定下载目录
-python bili_spider.py -s "python教程" --download --download-dir ~/Videos/bilibili
 ```
 
-### 参数说明
+---
+
+## Web界面使用说明
+
+### 关键词搜索
+- **搜索关键词**：用于B站初始搜索（必填）
+- **标题关键词**：多个用空格分开，标题必须包含所有关键词才会被筛选出来
+- **简介关键词**：多个用空格分开，简介必须包含所有关键词才会被筛选出来
+- **最大搜索页数**：每页30个结果，默认搜索5页
+
+### UP主爬取
+- **UP主 ID / 空间链接**：支持直接输入数字ID，或者粘贴空间URL（例如 https://space.bilibili.com/123456）会自动提取ID
+- **最大获取页数**：每页30个视频，可以设置最大获取多少页
+- **标题/简介筛选**：和搜索功能一样，可以关键词筛选
+- 点击"获取UP主视频"后，页面会以卡片形式展示所有匹配视频
+
+### 批量下载
+- **选择下载画质**：点击选择想要的画质，默认自动选最高
+- **限制下载数量**：设置大于0的数字就会只下载前N个
+- **输出文件夹**：视频保存到哪个目录，默认 `./download`
+- **注意**：必须先在搜索或UP主页面得到筛选结果才能下载
+
+### 结果保存
+- 每次搜索完成后，结果会自动保存到 `output/` 文件夹
+- 保存两种格式：
+  - `.json` - 完整数据，方便后续处理
+  - `.txt` - 纯文本链接列表，方便复制
+
+## 参数说明（命令行）
 
 | 参数 | 说明 | 示例 |
 |------|------|------|
@@ -72,9 +110,9 @@ python bili_spider.py -s "python教程" --download --download-dir ~/Videos/bilib
 ## 关于 Chrome 下载插件配合
 
 如果你已经有 Chrome 浏览器的 Bilibili 下载插件，可以：
-1. 先运行筛选：`python bili_spider.py -s "关键词" -t "标题关键词" -o results.json`
-2. 在得到的结果中复制视频链接
-3. 在 Chrome 中使用插件下载
+1. 在Web界面搜索筛选得到视频列表
+2. 复制视频链接
+3. 在 Chrome 中打开使用插件下载
 
 本工具也内置了直接下载功能，不需要插件即可完成爬取+下载全流程。
 
@@ -82,6 +120,7 @@ python bili_spider.py -s "python教程" --download --download-dir ~/Videos/bilib
 
 | qn 值 | 画质 |
 |-------|------|
+| （不填）| 自动最高 |
 | 127 | 8K |
 | 126 | 杜比视界 |
 | 125 | 1080P+ |
@@ -90,4 +129,8 @@ python bili_spider.py -s "python教程" --download --download-dir ~/Videos/bilib
 | 32 | 480P |
 | 16 | 360P |
 
-不指定 `--quality` 时，自动选择最高可用画质。
+不指定画质时，自动选择最高可用画质。
+
+## 项目地址
+
+https://github.com/lzpgood123/bili-spider
