@@ -618,7 +618,7 @@ function selectQuality(qn, text) {
 
 function parseKeywords(str) {
     if (!str.trim()) return [];
-    return str.trim().split(/\s+/);
+    return str.trim().split(/\\s+/);
 }
 
 function renderResults(results) {
