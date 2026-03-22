@@ -169,7 +169,7 @@ class BilibiliVideoSpider:
         return all_results
     
     def download_video(self, bvid: str, output_dir: str = "./download", quality: Optional[int] = None) -> bool:
-        """下载单个视频"""
+        """下载单个视频 - 兼容多个bilibili-api版本"""
         if not BILIBILI_API_AVAILABLE:
             print(f"下载 {bvid} 失败: bilibili-api-python 未安装")
             return False
@@ -179,27 +179,40 @@ class BilibiliVideoSpider:
             os.makedirs(output_dir, exist_ok=True)
             
             v = video.Video(bvid=bvid)
-            downloader = video.VideoDownload(v)
             
-            # 获取下载链接
-            if quality:
-                url = sync(downloader.get_best_download_url(qn=quality))
+            # 尝试不同版本的API
+            if hasattr(v, 'download'):
+                # 旧版本API
+                if quality:
+                    sync(v.download(output=output_dir, qn=quality))
+                else:
+                    sync(v.download(output=output_dir))
+            elif hasattr(video, 'VideoDownload'):
+                # 新版本API v1
+                downloader = video.VideoDownload(v)
+                if quality:
+                    url = sync(downloader.get_best_download_url(qn=quality))
+                else:
+                    url = sync(downloader.get_best_download_url())
+                if not url:
+                    print(f"下载 {bvid} 失败: 获取下载链接失败")
+                    return False
+                sync(downloader.download(url, output_dir))
+            elif hasattr(video, 'download'):
+                # 另一种新版本
+                if quality:
+                    sync(video.download(v, output=output_dir, qn=quality))
+                else:
+                    sync(video.download(v, output=output_dir))
             else:
-                url = sync(downloader.get_best_download_url())
-            
-            if not url:
-                print(f"下载 {bvid} 失败: 获取下载链接失败，可能需要登录Bilibili账号")
+                print(f"下载 {bvid} 失败: 找不到下载方法，bilibili-api版本不兼容")
                 return False
-            
-            # 开始下载
-            sync(downloader.download(url, output_dir))
+                
             return True
         except Exception as e:
             print(f"下载 {bvid} 失败: {str(e)}")
             if "403" in str(e) or "Forbidden" in str(e):
-                print("  → 原因可能: 需要登录Bilibili才能下载，需要设置 BILIBILI_SESSDATA 环境变量")
-            if "has no attribute 'download'" in str(e):
-                print("  → API 版本不匹配，已修复，请更新代码")
+                print("  → 原因可能: 需要登录Bilibili才能下载，请确认SESSDATA正确")
             return False
     
     def batch_download(self, videos: List[Dict], output_dir: str = "./download", limit: Optional[int] = None, quality: Optional[int] = None) -> int:
