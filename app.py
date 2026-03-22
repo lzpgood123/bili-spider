@@ -75,6 +75,7 @@ class BilibiliVideoSpider:
             for page in range(1, max_pages + 1):
                 try:
                     data = sync(u.get_videos(pn=page))
+                    # bilibili-api 返回结构: data['list']['vlist'] 正确
                     videos = data.get("list", {}).get("vlist", [])
                     if not videos:
                         break
@@ -608,7 +609,7 @@ async function doUserSearch() {
             body: JSON.stringify({
                 mid: mid,
                 title_keywords: titleKeywords,
-                desc_keywords: desc_keywords,
+                desc_keywords: descKeywords,
                 max_pages: maxPages
             })
         });
