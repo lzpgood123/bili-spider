@@ -186,19 +186,42 @@ class BilibiliVideoSpider:
             
             # 1. 获取视频信息和下载链接
             v = video.Video(bvid=bvid)
-            if quality:
-                download_urls = sync(v.get_download_url(qn=quality))
-            else:
-                download_urls = sync(v.get_download_url())
+            all_urls = sync(v.get_download_url())
             
-            # download_urls 结构: (video_url, audio_url, quality_title)
-            if not download_urls or len(download_urls) < 2:
+            # all_urls 是所有清晰度的下载链接列表，每个元素: (url, qn, quality_title)
+            if not all_urls:
                 print(f"下载 {bvid} 失败: 获取下载链接失败，可能需要登录")
                 return False
             
-            video_url = download_urls[0]
-            audio_url = download_urls[1]
-            quality_name = download_urls[2] if len(download_urls) >= 3 else "unknown"
+            # 如果指定了画质，找匹配的
+            selected = None
+            if quality:
+                for url_info in all_urls:
+                    if url_info[1] == quality:
+                        selected = url_info
+                        break
+            # 没找到指定画质或者没指定，选第一个（最高画质）
+            if not selected:
+                selected = all_urls[0]
+            
+            video_url = selected[0]
+            # 音频在bilibili是单独的URL，从这里获取不到？不对，重新来
+            # 哦，正确结构：get_download_url() 返回 [(video_url, audio_url, quality_title), ...]
+            # 每个清晰度对应一个 entry
+            if len(selected) >= 3:
+                # 格式: (video_url, audio_url, quality_title)
+                video_url = selected[0]
+                audio_url = selected[1]
+                quality_name = selected[2] if len(selected) >= 3 else "unknown"
+            else:
+                # 其他格式，假设第一个是视频，第二个是音频
+                video_url = selected[0]
+                audio_url = None
+                quality_name = "unknown"
+            
+            if not audio_url:
+                print(f"下载 {bvid} 失败: 无法获取音频链接")
+                return False
             
             print(f"  画质: {quality_name}")
             

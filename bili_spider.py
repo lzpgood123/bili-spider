@@ -150,19 +150,41 @@ class BilibiliVideoSpider:
             
             # 1. 获取视频信息和下载链接
             v = video.Video(bvid=bvid)
-            if quality:
-                download_urls = sync(v.get_download_url(qn=quality))
-            else:
-                download_urls = sync(v.get_download_url())
+            all_urls = sync(v.get_download_url())
             
-            # download_urls 结构: (video_url, audio_url, quality_title)
-            if not download_urls or len(download_urls) < 2:
+            # all_urls 是所有清晰度的下载链接列表，每个元素: (video_url, audio_url, quality_title)
+            if not all_urls:
                 print(f"下载 {bvid} 失败: 获取下载链接失败，可能需要登录")
                 return False
             
-            video_url = download_urls[0]
-            audio_url = download_urls[1]
-            quality_name = download_urls[2] if len(download_urls) >= 3 else "unknown"
+            # 如果指定了画质，找匹配的
+            selected = None
+            if quality:
+                for url_info in all_urls:
+                    # url_info: (video_url, audio_url, quality_title, qn) 或类似结构
+                    # 检查qn位置
+                    if len(url_info) >= 4 and url_info[3] == quality:
+                        selected = url_info
+                        break
+                    if len(url_info) >= 3 and hasattr(url_info[2], '__class__') and 'int' in str(url_info[2].__class__) and url_info[2] == quality:
+                        selected = url_info
+                        break
+            # 没找到指定画质或者没指定，选第一个（最高画质）
+            if not selected:
+                selected = all_urls[0]
+            
+            # 解析结果，适应不同格式
+            if len(selected) >= 3:
+                video_url = selected[0]
+                audio_url = selected[1]
+                quality_name = str(selected[2]) if selected[2] else "unknown"
+            else:
+                print(f"下载 {bvid} 失败: 无法解析下载链接格式")
+                return False
+            
+            if not audio_url:
+                print(f"下载 {bvid} 失败: 无法获取音频链接")
+                return False
             
             print(f"  画质: {quality_name}")
             
