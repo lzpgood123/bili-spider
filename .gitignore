@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Downloaded videos
+download/
+*.mp4
+*.mp3
+*.mkv
+
+# Output files
+*.json
+results.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
