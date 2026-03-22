@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import requests
 
-# 尝试导入 bilibili_api
+# 尝试导入 bilibili-api，如果没有则提示安装
 try:
     from bilibili_api import video, sync, user
     BILIBILI_API_AVAILABLE = True
@@ -44,7 +44,7 @@ class BilibiliVideoSpider:
             "keyword": keyword,
             "page": page,
             "page_size": page_size,
-            "search_type": "video"
+            "search_type": SEARCH_TYPE
         }
         
         try:
@@ -75,7 +75,6 @@ class BilibiliVideoSpider:
             for page in range(1, max_pages + 1):
                 try:
                     data = sync(u.get_videos(pn=page))
-                    # bilibili-api 返回结构: data['list']['vlist'] 正确
                     videos = data.get("list", {}).get("vlist", [])
                     if not videos:
                         break
@@ -170,62 +169,73 @@ class BilibiliVideoSpider:
     
     def download_video(self, bvid: str, output_dir: str = "./download", quality: Optional[int] = None) -> bool:
         """
-        下载单个视频 - 独立实现，不依赖bilibili-api内置下载，兼容所有版本
-        自己获取URL -> 自己下载 -> 自己用ffmpeg合并
+        下载单个视频 - 正确调用方式，基于BilibiliDown思路
         """
         if not BILIBILI_API_AVAILABLE:
             print(f"下载 {bvid} 失败: bilibili-api-python 未安装")
             return False
         
         import subprocess
-        from urllib.parse import urlparse
         
         try:
             # 确保输出目录存在
             os.makedirs(output_dir, exist_ok=True)
             
-            # 1. 获取视频信息和下载链接
+            # 1. 创建Video对象
             v = video.Video(bvid=bvid)
-            all_urls = sync(v.get_download_url())
             
-            # all_urls 是所有清晰度的下载链接列表，每个元素: (url, qn, quality_title)
-            if not all_urls:
+            # 2. 获取视频信息得到cid
+            info = sync(v.get_info())
+            cid = info.get("cid")
+            
+            if not cid:
+                print(f"下载 {bvid} 失败: 无法获取cid")
+                return False
+            
+            # 3. 获取下载链接 - 正确调用：需要传cid
+            if quality:
+                all_urls = sync(v.get_download_url(cid=cid, qn=quality))
+            else:
+                all_urls = sync(v.get_download_url(cid=cid))
+            
+            # all_urls = [(video_url, audio_url, quality_label, qn), ...]
+            if not all_urls or len(all_urls) == 0:
                 print(f"下载 {bvid} 失败: 获取下载链接失败，可能需要登录")
                 return False
             
-            # 如果指定了画质，找匹配的
-            selected = None
+            # 选择链接
             if quality:
-                for url_info in all_urls:
-                    if url_info[1] == quality:
-                        selected = url_info
+                # 找指定qn
+                selected = None
+                for item in all_urls:
+                    if len(item) >= 4 and item[3] == quality:
+                        selected = item
                         break
-            # 没找到指定画质或者没指定，选第一个（最高画质）
-            if not selected:
+                if not selected:
+                    selected = all_urls[0]
+            else:
                 selected = all_urls[0]
             
-            video_url = selected[0]
-            # 音频在bilibili是单独的URL，从这里获取不到？不对，重新来
-            # 哦，正确结构：get_download_url() 返回 [(video_url, audio_url, quality_title), ...]
-            # 每个清晰度对应一个 entry
-            if len(selected) >= 3:
-                # 格式: (video_url, audio_url, quality_title)
+            # 解析
+            if len(selected) >= 4:
                 video_url = selected[0]
                 audio_url = selected[1]
-                quality_name = selected[2] if len(selected) >= 3 else "unknown"
-            else:
-                # 其他格式，假设第一个是视频，第二个是音频
+                quality_label = selected[2]
+            elif len(selected) >= 3:
                 video_url = selected[0]
-                audio_url = None
-                quality_name = "unknown"
-            
-            if not audio_url:
-                print(f"下载 {bvid} 失败: 无法获取音频链接")
+                audio_url = selected[1]
+                quality_label = "unknown"
+            else:
+                print(f"下载 {bvid} 失败: 无法解析下载链接")
                 return False
             
-            print(f"  画质: {quality_name}")
+            if not audio_url:
+                print(f"下载 {bvid} 失败: 没有音频链接")
+                return False
             
-            # 2. 下载视频
+            print(f"  画质: {quality_label}")
+            
+            # 4. 下载视频
             video_path = os.path.join(output_dir, f"{bvid}_video.m4s")
             print(f"  正在下载视频...")
             resp_video = self.session.get(video_url, stream=True)
@@ -238,7 +248,7 @@ class BilibiliVideoSpider:
                     if chunk:
                         f.write(chunk)
             
-            # 3. 下载音频
+            # 5. 下载音频
             audio_path = os.path.join(output_dir, f"{bvid}_audio.m4a")
             print(f"  正在下载音频...")
             resp_audio = self.session.get(audio_url, stream=True)
@@ -251,14 +261,13 @@ class BilibiliVideoSpider:
                     if chunk:
                         f.write(chunk)
             
-            # 4. 获取视频标题，作为最终文件名
-            video_info = sync(v.get_info())
-            title = video_info.get("title", bvid)
-            # 替换文件名不允许的字符
+            # 6. 获取视频标题
+            title = info.get("title", bvid)
+            # 清理文件名
             safe_title = "".join([c if c not in r'<>:"/\|?*' else '_' for c in title])
             output_path = os.path.join(output_dir, f"{safe_title}.mp4")
             
-            # 5. ffmpeg 合并
+            # 7. ffmpeg 合并
             print(f"  正在合并视频音频...")
             cmd = [
                 'ffmpeg', '-y',
@@ -270,10 +279,10 @@ class BilibiliVideoSpider:
             
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
-                print(f"  ffmpeg合并失败: {result.stderr}")
+                print(f"  ffmpeg合并失败: {result.stderr[:100]}")
                 return False
             
-            # 6. 删除临时文件
+            # 8. 删除临时文件
             try:
                 os.remove(video_path)
                 os.remove(audio_path)
@@ -286,7 +295,7 @@ class BilibiliVideoSpider:
         except Exception as e:
             print(f"下载 {bvid} 失败: {str(e)}")
             if "403" in str(e) or "Forbidden" in str(e):
-                print("  → 原因可能: 需要登录Bilibili才能下载，请确认SESSDATA正确")
+                print("  → 需要登录Bilibili，请设置 BILIBILI_SESSDATA 环境变量")
             return False
     
     def batch_download(self, videos: List[Dict], output_dir: str = "./download", limit: Optional[int] = None, quality: Optional[int] = None) -> int:
@@ -295,8 +304,9 @@ class BilibiliVideoSpider:
             videos = videos[:limit]
         
         success_count = 0
-        for v in videos:
-            print(f"正在下载: {v['title']}")
+        for i, v in enumerate(videos):
+            print(f"\n正在下载 ({i+1}/{len(videos)}): {v['title']}")
+            print(f"链接: {v['video_url']}")
             if self.download_video(v["bvid"], output_dir, quality):
                 success_count += 1
         
@@ -774,7 +784,7 @@ async function doDownload() {
         
         if (data.log && data.log.trim()) {
             html += `<details style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
-                <summary>查看下载日志（点击展开）</summary>
+                <summary>查看下载日志 (点击展开)</summary>
                 <pre style="white-space: pre-wrap; word-break: break-all; margin-top: 10px; padding: 10px; background: #eee; border-radius: 4px; font-size: 12px; max-height: 300px; overflow: auto;">${data.log}</pre>
             </details>`;
         }
@@ -884,35 +894,4 @@ def api_download():
         return jsonify({"error": f"结果文件不存在: {result_path}"})
     
     with open(result_path, 'r', encoding='utf-8') as f:
-        current_results = json.load(f)
-    
-    if not current_results:
-        return jsonify({"error": "结果文件为空，请重新搜索"})
-    
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # 捕获标准输出，让前端可以显示错误信息
-    old_stdout = sys.stdout
-    captured_output = StringIO()
-    sys.stdout = captured_output
-    
-    success_count = spider.batch_download(current_results, output_dir, limit, quality)
-    
-    # 恢复标准输出
-    sys.stdout = old_stdout
-    output_log = captured_output.getvalue()
-    
-    return jsonify({
-        "success": success_count,
-        "total": len(current_results) if limit is None else min(limit, len(current_results)),
-        "output_dir": output_dir,
-        "log": output_log
-    })
-
-
-if __name__ == '__main__':
-    print("🚀 Bilibili 视频关键词筛选爬取工具 Web 启动")
-    print("📝 访问: http://127.0.0.1:5000")
-    print("💾 结果默认保存到: ./output/")
-    print("💾 视频默认保存到: ./download/")
-    app.run(host='0.0.0.0', port=5000, debug=False)
+        current
