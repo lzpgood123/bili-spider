@@ -139,11 +139,24 @@ class BilibiliVideoSpider:
             return False
         
         try:
+            # 确保输出目录存在
+            os.makedirs(output_dir, exist_ok=True)
+            
             v = video.Video(bvid=bvid)
+            downloader = video.VideoDownload(v)
+            
+            # 获取下载链接
             if quality:
-                sync(v.download(output=output_dir, qn=quality))
+                url = sync(downloader.get_best_download_url(qn=quality))
             else:
-                sync(v.download(output=output_dir))
+                url = sync(downloader.get_best_download_url())
+            
+            if not url:
+                print(f"下载 {bvid} 失败: 获取下载链接失败，可能需要登录Bilibili账号")
+                return False
+            
+            # 开始下载
+            sync(downloader.download(url, output_dir))
             return True
         except Exception as e:
             print(f"下载 {bvid} 失败: {e}")

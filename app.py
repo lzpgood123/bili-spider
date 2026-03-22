@@ -179,27 +179,27 @@ class BilibiliVideoSpider:
             os.makedirs(output_dir, exist_ok=True)
             
             v = video.Video(bvid=bvid)
+            downloader = video.VideoDownload(v)
             
-            # 测试：先获取下载链接，确认能否访问
+            # 获取下载链接
             if quality:
-                info = sync(v.get_download_url(qn=quality))
+                url = sync(downloader.get_best_download_url(qn=quality))
             else:
-                info = sync(v.get_download_url())
+                url = sync(downloader.get_best_download_url())
             
-            if not info:
+            if not url:
                 print(f"下载 {bvid} 失败: 获取下载链接失败，可能需要登录Bilibili账号")
                 return False
             
-            if quality:
-                sync(v.download(output=output_dir, qn=quality))
-            else:
-                sync(v.download(output=output_dir))
-                
+            # 开始下载
+            sync(downloader.download(url, output_dir))
             return True
         except Exception as e:
             print(f"下载 {bvid} 失败: {str(e)}")
             if "403" in str(e) or "Forbidden" in str(e):
                 print("  → 原因可能: 需要登录Bilibili才能下载，需要设置 BILIBILI_SESSDATA 环境变量")
+            if "has no attribute 'download'" in str(e):
+                print("  → API 版本不匹配，已修复，请更新代码")
             return False
     
     def batch_download(self, videos: List[Dict], output_dir: str = "./download", limit: Optional[int] = None, quality: Optional[int] = None) -> int:
