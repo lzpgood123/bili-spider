@@ -171,17 +171,35 @@ class BilibiliVideoSpider:
     def download_video(self, bvid: str, output_dir: str = "./download", quality: Optional[int] = None) -> bool:
         """下载单个视频"""
         if not BILIBILI_API_AVAILABLE:
+            print(f"下载 {bvid} 失败: bilibili-api-python 未安装")
             return False
         
         try:
+            # 确保输出目录存在
+            os.makedirs(output_dir, exist_ok=True)
+            
             v = video.Video(bvid=bvid)
+            
+            # 测试：先获取下载链接，确认能否访问
+            if quality:
+                info = sync(v.get_download_url(qn=quality))
+            else:
+                info = sync(v.get_download_url())
+            
+            if not info:
+                print(f"下载 {bvid} 失败: 获取下载链接失败，可能需要登录Bilibili账号")
+                return False
+            
             if quality:
                 sync(v.download(output=output_dir, qn=quality))
             else:
                 sync(v.download(output=output_dir))
+                
             return True
         except Exception as e:
-            print(f"下载 {bvid} 失败: {e}")
+            print(f"下载 {bvid} 失败: {str(e)}")
+            if "403" in str(e) or "Forbidden" in str(e):
+                print("  → 原因可能: 需要登录Bilibili才能下载，需要设置 BILIBILI_SESSDATA 环境变量")
             return False
     
     def batch_download(self, videos: List[Dict], output_dir: str = "./download", limit: Optional[int] = None, quality: Optional[int] = None) -> int:
@@ -665,7 +683,16 @@ async function doDownload() {
             return;
         }
         
-        resultDiv.innerHTML = `<div class="success">下载完成！成功 ${data.success}/${data.total} 个，保存到 ${data.output_dir}</div>`;
+        let html = `<div class="success">下载完成！成功 ${data.success}/${data.total} 个，保存到 ${data.output_dir}</div>`;
+        
+        if (data.log && data.log.trim()) {
+            html += `<details style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                <summary>查看下载日志（点击展开）</summary>
+                <pre style="white-space: pre-wrap; word-break: break-all; margin-top: 10px; padding: 10px; background: #eee; border-radius: 4px; font-size: 12px; max-height: 300px; overflow: auto;">${data.log}</pre>
+            </details>`;
+        }
+        
+        resultDiv.innerHTML = html;
     } catch (e) {
         resultDiv.innerHTML = `<div class="error">下载出错: ${e.message}</div>`;
     }
@@ -750,6 +777,9 @@ def api_save():
 
 @app.route('/api/download', methods=['POST'])
 def api_download():
+    import sys
+    from io import StringIO
+    
     data = request.get_json()
     quality = data.get('quality')
     limit = data.get('limit')
@@ -773,12 +803,23 @@ def api_download():
         return jsonify({"error": "结果文件为空，请重新搜索"})
     
     os.makedirs(output_dir, exist_ok=True)
+    
+    # 捕获标准输出，让前端可以显示错误信息
+    old_stdout = sys.stdout
+    captured_output = StringIO()
+    sys.stdout = captured_output
+    
     success_count = spider.batch_download(current_results, output_dir, limit, quality)
+    
+    # 恢复标准输出
+    sys.stdout = old_stdout
+    output_log = captured_output.getvalue()
     
     return jsonify({
         "success": success_count,
         "total": len(current_results) if limit is None else min(limit, len(current_results)),
-        "output_dir": output_dir
+        "output_dir": output_dir,
+        "log": output_log
     })
 
 
