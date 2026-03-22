@@ -133,48 +133,101 @@ class BilibiliVideoSpider:
         return all_results
     
     def download_video(self, bvid: str, output_dir: str = "./download", quality: Optional[int] = None) -> bool:
-        """下载单个视频 - 兼容多个bilibili-api版本"""
+        """
+        下载单个视频 - 独立实现，不依赖bilibili-api内置下载，兼容所有版本
+        自己获取URL -> 自己下载 -> 自己用ffmpeg合并
+        """
         if not BILIBILI_API_AVAILABLE:
             print("错误: bilibili-api-python 未安装，请先运行 pip install bilibili-api-python")
             return False
+        
+        import subprocess
+        from urllib.parse import urlparse
         
         try:
             # 确保输出目录存在
             os.makedirs(output_dir, exist_ok=True)
             
+            # 1. 获取视频信息和下载链接
             v = video.Video(bvid=bvid)
-            
-            # 尝试不同版本的API
-            if hasattr(v, 'download'):
-                # 旧版本API
-                if quality:
-                    sync(v.download(output=output_dir, qn=quality))
-                else:
-                    sync(v.download(output=output_dir))
-            elif hasattr(video, 'VideoDownload'):
-                # 新版本API v1
-                downloader = video.VideoDownload(v)
-                if quality:
-                    url = sync(downloader.get_best_download_url(qn=quality))
-                else:
-                    url = sync(downloader.get_best_download_url())
-                if not url:
-                    print(f"下载 {bvid} 失败: 获取下载链接失败")
-                    return False
-                sync(downloader.download(url, output_dir))
-            elif hasattr(video, 'download'):
-                # 另一种新版本
-                if quality:
-                    sync(video.download(v, output=output_dir, qn=quality))
-                else:
-                    sync(video.download(v, output=output_dir))
+            if quality:
+                download_urls = sync(v.get_download_url(qn=quality))
             else:
-                print(f"下载 {bvid} 失败: 找不到下载方法，bilibili-api版本不兼容")
+                download_urls = sync(v.get_download_url())
+            
+            # download_urls 结构: (video_url, audio_url, quality_title)
+            if not download_urls or len(download_urls) < 2:
+                print(f"下载 {bvid} 失败: 获取下载链接失败，可能需要登录")
                 return False
-                
+            
+            video_url = download_urls[0]
+            audio_url = download_urls[1]
+            quality_name = download_urls[2] if len(download_urls) >= 3 else "unknown"
+            
+            print(f"  画质: {quality_name}")
+            
+            # 2. 下载视频
+            video_path = os.path.join(output_dir, f"{bvid}_video.m4s")
+            print(f"  正在下载视频...")
+            resp_video = self.session.get(video_url, stream=True)
+            if resp_video.status_code != 200:
+                print(f"  视频下载失败: HTTP {resp_video.status_code}")
+                return False
+            
+            with open(video_path, 'wb') as f:
+                for chunk in resp_video.iter_content(chunk_size=1024*1024):
+                    if chunk:
+                        f.write(chunk)
+            
+            # 3. 下载音频
+            audio_path = os.path.join(output_dir, f"{bvid}_audio.m4a")
+            print(f"  正在下载音频...")
+            resp_audio = self.session.get(audio_url, stream=True)
+            if resp_audio.status_code != 200:
+                print(f"  音频下载失败: HTTP {resp_audio.status_code}")
+                return False
+            
+            with open(audio_path, 'wb') as f:
+                for chunk in resp_audio.iter_content(chunk_size=1024*1024):
+                    if chunk:
+                        f.write(chunk)
+            
+            # 4. 获取视频标题，作为最终文件名
+            video_info = sync(v.get_info())
+            title = video_info.get("title", bvid)
+            # 替换文件名不允许的字符
+            safe_title = "".join([c if c not in r'<>:"/\|?*' else '_' for c in title])
+            output_path = os.path.join(output_dir, f"{safe_title}.mp4")
+            
+            # 5. ffmpeg 合并
+            print(f"  正在合并视频音频...")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', video_path,
+                '-i', audio_path,
+                '-c', 'copy',
+                output_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"  ffmpeg合并失败: {result.stderr[:100]}...")
+                return False
+            
+            # 6. 删除临时文件
+            try:
+                os.remove(video_path)
+                os.remove(audio_path)
+            except:
+                pass
+            
+            print(f"  ✓ 完成: {output_path}")
             return True
+            
         except Exception as e:
-            print(f"下载 {bvid} 失败: {e}")
+            print(f"下载 {bvid} 失败: {str(e)}")
+            if "403" in str(e) or "Forbidden" in str(e):
+                print("  → 原因可能: 需要登录Bilibili才能下载，请确认SESSDATA正确")
             return False
     
     def batch_download(self, videos: List[Dict], output_dir: str = "./download", limit: Optional[int] = None, quality: Optional[int] = None) -> int:
