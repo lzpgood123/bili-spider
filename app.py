@@ -486,6 +486,7 @@ HTML_TEMPLATE = '''
 
 <script>
 let currentResults = [];
+let lastResultFile = null;
 
 function switchTab(tabName) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -543,7 +544,8 @@ function saveResultsToFile(results) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(results)
     }).then(resp => resp.json()).then(data => {
-        console.log('结果已保存到', data.path);
+        console.log('结果已保存到', data.json_path);
+        lastResultFile = data.filename;
     });
 }
 
@@ -628,7 +630,7 @@ async function doUserSearch() {
 }
 
 async function doDownload() {
-    if (currentResults.length === 0) {
+    if (currentResults.length === 0 || !lastResultFile) {
         document.getElementById('downloadResult').innerHTML = `<div class="error">请先在搜索或UP主页面获取筛选结果再下载</div>`;
         return;
     }
@@ -651,7 +653,8 @@ async function doDownload() {
             body: JSON.stringify({
                 quality: quality,
                 limit: limit > 0 ? limit : null,
-                output_dir: outputDir
+                output_dir: outputDir,
+                result_file: lastResultFile
             })
         });
         
@@ -739,6 +742,7 @@ def api_save():
     
     return jsonify({
         "success": True,
+        "filename": filename,
         "json_path": filepath,
         "txt_path": txt_filepath
     })
@@ -746,25 +750,34 @@ def api_save():
 
 @app.route('/api/download', methods=['POST'])
 def api_download():
-    global currentResults
-    
     data = request.get_json()
     quality = data.get('quality')
     limit = data.get('limit')
     output_dir = data.get('output_dir', './download')
+    result_file = data.get('result_file')
     
     if not BILIBILI_API_AVAILABLE:
         return jsonify({"error": "bilibili-api-python 未安装，请运行 pip install bilibili-api-python 后才能下载"})
     
-    if not currentResults:
-        return jsonify({"error": "没有筛选结果，请先搜索"})
+    if not result_file:
+        return jsonify({"error": "没有筛选结果文件，请先搜索"})
+    
+    result_path = os.path.join(DEFAULT_OUTPUT_DIR, result_file)
+    if not os.path.exists(result_path):
+        return jsonify({"error": f"结果文件不存在: {result_path}"})
+    
+    with open(result_path, 'r', encoding='utf-8') as f:
+        current_results = json.load(f)
+    
+    if not current_results:
+        return jsonify({"error": "结果文件为空，请重新搜索"})
     
     os.makedirs(output_dir, exist_ok=True)
-    success_count = spider.batch_download(currentResults, output_dir, limit, quality)
+    success_count = spider.batch_download(current_results, output_dir, limit, quality)
     
     return jsonify({
         "success": success_count,
-        "total": len(currentResults) if limit is None else min(limit, len(currentResults)),
+        "total": len(current_results) if limit is None else min(limit, len(current_results)),
         "output_dir": output_dir
     })
 
